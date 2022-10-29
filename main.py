@@ -78,7 +78,7 @@ main_window = None
 key_monitor = None
 click_thread = None
 
-data = 'data.json'
+data = 'resources/data.json'
 icon = path('resources/icon.ico')
 menu = path('resources/menu.png')
 settings = path('resources/settings.png')
