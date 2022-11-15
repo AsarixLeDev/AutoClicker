@@ -2,17 +2,18 @@
 import cgitb
 import json
 import os
-import queue
 import sys
 import threading
 import time
+from datetime import datetime
 from inspect import currentframe, getframeinfo
 
-from PyQt5 import QtCore, QtWidgets, QtGui
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QFont, QIcon
-from PyQt5.QtWidgets import QLabel, QPushButton, QLineEdit, QGridLayout, QRadioButton, QStackedWidget, QMainWindow, \
-    QMessageBox, QCheckBox
+import keyboard
+from PyQt6 import QtWidgets, QtGui
+from PyQt6.QtCore import QObject, Qt, QThread
+from PyQt6.QtGui import QIcon, QFont
+from PyQt6.QtWidgets import QRadioButton, QCheckBox, QLabel, QStackedWidget, QPushButton, QGridLayout, QLineEdit, \
+    QMessageBox, QMainWindow
 from pynput.keyboard import Listener, KeyCode
 from pynput.mouse import Button, Controller
 
@@ -21,15 +22,28 @@ cgitb.enable(format='text')
 standalone = getattr(sys, 'frozen', False)
 
 
+def millis():
+    return round(time.time() * 1000)
+
+
+def key_listen():
+    widget = main_window.main_widget
+    value = widget.key_listen
+    if value:
+        widget.key_listen = False
+        print("disable key listen")
+    return value
+
+
 def chrono(line, func):
     start = time.time()
     func()
     print("La fonction à la ligne", getframeinfo(line).lineno, "a duré", time.time() - start, "secondes.")
 
 
-def white_style(w: QtWidgets.QWidget, add=''):
-    w.setStyleSheet(add + ';color:white')
-    return w
+def white_style(widget: QtWidgets.QWidget, add=''):
+    widget.setStyleSheet(add + ';color:white')
+    return widget
 
 
 def d(i):
@@ -52,7 +66,7 @@ def read_json():
     pos_y = 300
     size_x = 380
     size_y = 180
-    print("read from " + data)
+    # print("read from " + data)
     if os.path.exists(data):
         with open(data) as data_file:
             json_data = json.load(data_file)
@@ -89,7 +103,6 @@ key = 'c'
 delay = 1
 keys = ['w', 'a', 's', 'd']
 
-
 if standalone:
     data = os.path.join(os.path.expanduser('~\\Documents'), 'AsaClick')
     if not os.path.exists(data):
@@ -109,10 +122,8 @@ if standalone:
     else:
         data = os.path.join(data, 'resources/data.json')
 
-debug_counter = 2
 
-
-class ClickMouse(threading.Thread):
+class ClickMouse(QObject):
     def __init__(self):
         super().__init__()
         self.delay = 1
@@ -120,85 +131,128 @@ class ClickMouse(threading.Thread):
         self.program_running = True
         self.mouse = Controller()
         self.currently_pressed = None
+        # self.run()
 
     def start_clicking(self):
         if not button:
+            print("no button")
             return
         if main_window.main_widget.hold_check.isChecked():
             self.mouse.press(button)
             self.currently_pressed = button
         self.running = True
+        print("start")
 
     def stop_clicking(self):
         self.running = False
         if self.currently_pressed:
             self.mouse.release(self.currently_pressed)
+            self.currently_pressed = None
+        print("stop")
 
     def __exit__(self):
+        print("exit")
         self.stop_clicking()
         self.program_running = False
 
     def run(self):
         while self.program_running:
-            while self.running:
+            if self.running:
                 if self.currently_pressed:
                     continue
                 self.mouse.click(button)
-                time.sleep(delay*0.8)
+            QThread.currentThread().msleep(int(delay*1000))
+        print("click thread exit")
 
 
-class KeyMonitor(QtCore.QObject):
-    keyPressed = QtCore.pyqtSignal(KeyCode)
+# class KeyMonitor2(QObject):
+#     def __init__(self):
+#         super().__init__()
+#         self.last_pressed = millis()
+#         self.listening = True
+#         self.running = True
+#
+#     def start_monitoring(self):
+#         while self.running:
+#             if self.listening:
+#                 print("run...")
+#                 self.run()
+#
+#     def stop_monitoring(self):
+#         self.running = False
+#
+#     def run(self):
+#         if not keyboard.read_key():
+#             return
+#         print("handling key...")
+#         global click_thread
+#         if key_listen():
+#             print("ntm")
+#             return
+#         if millis() - self.last_pressed > 1000:
+#             try:
+#                 print(2)
+#                 if keyboard.is_pressed(key):
+#                     if click_thread.running:
+#                         print('Stop clicking...')
+#                         click_thread.stop_clicking()
+#                         main_window.main_widget.disabled()
+#                         # print('stopped')
+#                     else:
+#                         print("t")
+#                         click_thread.start_clicking()
+#                         main_window.main_widget.enabled()
+#
+#             except TypeError:
+#                 pass
+#         else:
+#             print(millis(), self.last_pressed, millis() - self.last_pressed)
+#             print("ntm 2")
+#         if keyboard.read_key() not in main_window.ks_widget.keys:
+#             print("update")
+#             self.last_pressed = millis()
 
+
+class KeyMonitor(QObject):
     def __init__(self):
         super().__init__()
-        self.listener = Listener(on_press=self.on_release)
-        self.click_thread = ClickMouse()
-        self.last_pressed = self.millis()
-        self.queue = queue.Queue()
+        self.last_pressed = millis()
+        self.listener = None
 
-    def on_release(self, key_pressed: KeyCode):
-        print(1)
-        self.key_handle(key_pressed)
-        print(2)
-    
-    def key_handle(self, key_pressed: KeyCode):
-        key_pressed = str(key_pressed).replace("'", "")
-        global debug_counter
-        if key_pressed and debug_counter and (self.millis() - self.last_pressed) > 1000:
-            try:
-                if key_pressed == key:
-                    if debug_counter == 2:
-                        if self.click_thread.running:
-                            print('Stop clicking...')
-                            self.click_thread.stop_clicking()
-                            main_window.main_widget.disabled()
-                            print('stopped')
-                        else:
-                            self.click_thread.start_clicking()
-                            main_window.main_widget.enabled()
-                    if debug_counter == 1:
-                        debug_counter += 1
-            except TypeError:
-                print("error")
-                pass
-        else:
-            print("key wasnt handled bc of cooldown")
-        if key_pressed not in main_window.ks_widget.keys:
-            self.last_pressed = self.millis()
-
-    @staticmethod
-    def millis():
-        return round(time.time() * 1000)
+    def start_monitoring(self):
+        with Listener(on_press=self.run) as self.listener:
+            self.listener.join()
 
     def stop_monitoring(self):
         self.listener.stop()
-        self.click_thread.__exit__()
 
-    def start_monitoring(self):
-        with Listener(on_press=self.on_release) as self.listener:
-            self.listener.join()
-        self.click_thread.start()
+    def run(self, key_pressed: KeyCode):
+        key_pressed = str(key_pressed)[1]
+        # print("handling key...", key_pressed, key)
+        global click_thread
+        if key_listen():
+            print("ntm")
+            return
+        if millis() - self.last_pressed > 1000:
+            try:
+                print(2)
+                if key_pressed == key:
+                    if click_thread.running:
+                        print('Stop clicking...')
+                        click_thread.stop_clicking()
+                        main_window.main_widget.disabled()
+                        # print('stopped')
+                    else:
+                        print("t")
+                        click_thread.start_clicking()
+                        main_window.main_widget.enabled()
+
+            except TypeError:
+                pass
+        # else:
+        #     print(millis(), self.last_pressed, millis() - self.last_pressed)
+            # print("ntm 2")
+        self.last_pressed = millis()
 
 
 class MainWidget(QtWidgets.QWidget):
@@ -226,12 +280,12 @@ class MainWidget(QtWidgets.QWidget):
         self.setup()
 
     def setup(self):
-        print('setup...')
+        # print('setup...')
         self.bar.addWidget(self.disable_bar)
         self.bar.addWidget(self.enable_bar)
         self.bar.setCurrentWidget(self.disable_bar)
 
-        self.t_cps.setAlignment(Qt.AlignTop)
+        self.t_cps.setAlignment(Qt.AlignmentFlag.AlignTop)
         white_style(self.t_cps)
         self.update_cps()
 
@@ -242,18 +296,18 @@ class MainWidget(QtWidgets.QWidget):
         self.ks_btn.setStyleSheet('border:0px')
         self.ks_btn.setFixedSize(23, 23)
 
-        self.delayInputLine.setAlignment(Qt.AlignCenter)
+        self.delayInputLine.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.delayInputLine.setReadOnly(False)
         self.delayInputLine.returnPressed.connect(self.enter_delay)
         self.delayInputLine.setFont(QFont('Arial', 10))
         white_style(self.delayInputLine)
 
         self.disable_bar.setStyleSheet('color:red')
-        self.disable_bar.setAlignment(Qt.AlignCenter)
+        self.disable_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.disable_bar.setFont(QFont('Arial', 20))
 
         self.enable_bar.setStyleSheet('color:green')
-        self.enable_bar.setAlignment(Qt.AlignCenter)
+        self.enable_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.enable_bar.setFont(QFont('Arial', 20))
 
         self.left_radio_button.toggled.connect(self.on_clicked)
@@ -286,7 +340,7 @@ class MainWidget(QtWidgets.QWidget):
         self.grid.setColumnStretch(1, 2)
         self.grid.setColumnStretch(2, 2)
 
-#        self.grid.setRowStretch(1, 1)
+        #        self.grid.setRowStretch(1, 1)
 
         self.grid.setColumnMinimumWidth(0, 50)
         self.grid.setColumnMinimumWidth(1, 90)
@@ -299,38 +353,41 @@ class MainWidget(QtWidgets.QWidget):
 
         self.setLayout(self.grid)
 
-        print('done')
+        # print('done')
 
     def change_key(self):
-        global debug_counter
-        debug_counter = 0
+        global key_monitor
         self.setFocus()
         if self.key_listen:
-            debug_counter = 2
+            print("disable listening")
             self.key_listen = False
             white_style(self.btn, add='background-color:#0000b3')
+            key_monitor.listening = True
         else:
+            print("start listening key for change...")
             self.key_listen = True
             white_style(self.btn, add='background-color:#000066')
+            key_monitor.listening = False
+        print("key_listen1", self.key_listen)
 
     def keyPressEvent(self, e):
-        global debug_counter, key
-
+        global key
+        print("keypress")
+        print("key_listen2", self.key_listen)
         if self.key_listen:
             key = 'j'
             try:
                 key = chr(e.key()).lower()
+                print(key)
             except ValueError:
                 pass
-            debug_counter += 1
             self.btn.setText(key.upper())
-            white_style(self.btn, add='background-color:#0000b3')
-            self.key_listen = False
+            self.change_key()
 
     def disabled(self):
-        print('Updating bar...')
+        # print('Updating bar...')
         self.bar.setCurrentWidget(self.disable_bar)
-        print('done')
+        # print('done')
 
     def enabled(self):
         self.bar.setCurrentWidget(self.enable_bar)
@@ -340,6 +397,8 @@ class MainWidget(QtWidgets.QWidget):
         value = self.delayInputLine.text()
         try:
             delay = float(value)
+            if delay < 0.001:
+                delay = 0.001
         except ValueError:
             delay = 1
         self.delayInputLine.setText(str(delay))
@@ -374,14 +433,14 @@ class MyLineEdit(QLineEdit):
             super().keyPressEvent(a0)
         except ValueError:
             if a0.key() not in (
-                    Qt.Key_Delete,
-                    Qt.Key_Backspace,
-                    Qt.Key_Comma,
-                    Qt.Key_Period,
-                    Qt.Key_Return):
+                    Qt.Key.Key_Delete,
+                    Qt.Key.Key_Backspace,
+                    Qt.Key.Key_Comma,
+                    Qt.Key.Key_Period,
+                    Qt.Key.Key_Return):
                 a0.ignore()
                 return
-            if a0.key() == Qt.Key_Comma:
+            if a0.key() == Qt.Key.Key_Comma:
                 self.setText(self.text() + ".")
                 return
             super().keyPressEvent(a0)
@@ -407,7 +466,7 @@ class KeySettingWidget(QtWidgets.QWidget):
         self.grid.setColumnMinimumWidth(0, 20)
 
         self.title = white_style(QLabel('Blacklisted Keys'))
-        self.title.setAlignment(Qt.AlignCenter)
+        self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title.setFont(QFont('Arial', self.parent.size().width() // 12))
 
         self.more = self.f_btn('+')
@@ -438,7 +497,7 @@ class KeySettingWidget(QtWidgets.QWidget):
         for i in reversed(range(self.grid.count())):
             self.grid.itemAt(i).widget().setParent(None)
         for i in range(len(keys)):
-            self.grid.addWidget(KeyButton(keys[i].upper(), self.parent.size().height()//20, self), i+2, 1)
+            self.grid.addWidget(KeyButton(keys[i].upper(), self.parent.size().height() // 20, self), i + 2, 1)
 
         self.grid.addWidget(self.title, 1, 1)
         self.grid.addWidget(self.more, len(keys) + 2, 1)
@@ -453,15 +512,15 @@ class KeySettingWidget(QtWidgets.QWidget):
         new_button = QPushButton(text, self)
         if q_icon:
             new_button = QPushButton(q_icon, text)
-        new_button.setFont(QFont('Arial', self.parent.size().height()//20))
+        new_button.setFont(QFont('Arial', self.parent.size().height() // 20))
         return white_style(new_button, add='background-color:#0000b3')
 
     def keyPressEvent(self, e: QtGui.QKeyEvent) -> None:
         if self.key_listen or True:
             try:
-                print(e.key() == Qt.Key_Escape)
+                # print(e.key() == Qt.Key_Escape)
                 new_key = chr(e.key()).lower()
-                print(new_key)
+                # print(new_key)
             except ValueError:
                 pass
 
@@ -481,13 +540,13 @@ class KeyButton(QPushButton):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, x, y, w, h):
+    def __init__(self, pos_x, pos_y, size_w, size_h):
         super().__init__()
         self.setStyleSheet('background-color:#151838')
         self.setWindowTitle("Asarix's Auto Clicker")
         self.setWindowIcon(QIcon(icon))
         self.setMinimumSize(600, 300)
-        self.setGeometry(x, y, w, h)
+        self.setGeometry(pos_x, pos_y, size_w, size_h)
 
         self.central_widget = QStackedWidget(self)
         self.setCentralWidget(self.central_widget)
@@ -498,7 +557,14 @@ class MainWindow(QMainWindow):
         self.central_widget.setCurrentWidget(self.main_widget)
 
         self.show()
-        threading.Thread(target = key_monitor.start_monitoring, daemon=True).start()
+        self.key_thread = QThread()
+        self.click_thread = QThread()
+        key_monitor.moveToThread(self.key_thread)
+        click_thread.moveToThread(self.click_thread)
+        self.key_thread.started.connect(key_monitor.start_monitoring)
+        self.click_thread.started.connect(click_thread.run)
+        self.key_thread.start()
+        self.click_thread.start()
 
     def set_settings_layout(self):
         self.main_widget.hide()
@@ -514,15 +580,23 @@ class MainWindow(QMainWindow):
         click_thread.program_running = True
 
     def closeEvent(self, a0: QtGui.QCloseEvent):
+        print("closed")
         self.shut()
         a0.accept()
 
     def shut(self):
+        print("threads")
+        # self.key_log_thread.join()
+        key_monitor.stop_monitoring()
+        print(1)
+        # self.click_thread.join()
+        # click_thread.program_running = False
+        print("done")
         btn_name = 'left'
         if button == Button.right:
             btn_name = 'right'
-        print("wrote to " + data)
-        print(delay)
+        # print("wrote to " + data)
+        # print(delay)
         data_to_write = {
             'cx': self.pos().x() + 1,
             'cy': self.pos().y() + 31,
@@ -532,9 +606,10 @@ class MainWindow(QMainWindow):
             'key': key,
             'button': btn_name
         }
+        print("write")
         with open(data, 'w') as f:
             json.dump(data_to_write, f)
-        key_monitor.stop_monitoring()
+        print("done")
 
 
 if __name__ == "__main__":
